@@ -1,0 +1,21 @@
+{
+  "name": "soccer-headsup",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Provider-neutral daily soccer fixture planner",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/src/cli.js",
+    "dev": "tsc && node dist/src/cli.js",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
