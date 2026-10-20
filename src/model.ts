@@ -13,6 +13,7 @@ export interface Match {
   kickoff: Date;
   home: string;
   away: string;
+  venue?: string;
   broadcast?: Broadcast;
 }
 

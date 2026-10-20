@@ -5,6 +5,8 @@ import { findSportsDbBroadcasts, findYouTubeBroadcasts, resolveBroadcasts, title
 import type { Match } from "../src/model.js";
 import { chooseSchedule } from "../src/planner.js";
 import { TheSportsDbClient } from "../src/thesportsdb.js";
+import { eventResource, googleEventId } from "../src/google-calendar.js";
+import { displayMatch } from "../src/presentation.js";
 
 function fixture(id: number, hour: number, free = false): Match {
   return {
@@ -34,10 +36,14 @@ test("non-overlapping matches are retained", async () => {
 });
 
 test("calendar contains home side and stream link", () => {
-  const item = fixture(2, 18, true);
-  assert.match(asIcs([item]), /LOCATION:Home 2 \(home\)/);
+  const item = { ...fixture(2, 18, true), venue: "Maracanã" };
+  assert.match(asIcs([item]), /LOCATION:Maracanã \(Home 2\)/);
   assert.match(asIcs([item]), /URL:https:\/\/youtube.com\/watch\?v=x/);
   assert.match(googleCalendarUrl(item), /calendar\.google\.com\/calendar\/render/);
+});
+
+test("calendar location falls back to the home team when venue is unavailable", () => {
+  assert.match(asIcs([fixture(4, 20)]), /LOCATION:Home 4/);
 });
 
 test("YouTube title matching ignores accents and common club suffixes", () => {
@@ -85,7 +91,7 @@ test("TheSportsDB client filters configured leagues and treats timestamps as UTC
     {
       idEvent: "2594560", idLeague: "4480", strLeague: "UEFA Champions League",
       strTimestamp: "2026-10-20T19:00:00", dateEvent: "2026-10-20", strTime: "19:00:00",
-      strHomeTeam: "Paris Saint-Germain", strAwayTeam: "Barcelona"
+      strHomeTeam: "Paris Saint-Germain", strAwayTeam: "Barcelona", strVenue: "Parc des Princes"
     },
     {
       idEvent: "1", idLeague: "9999", strLeague: "Other", strTimestamp: "2026-10-20T20:00:00",
@@ -96,6 +102,7 @@ test("TheSportsDB client filters configured leagues and treats timestamps as UTC
   assert.equal(matches.length, 1);
   assert.equal(matches[0]?.fixtureId, 2594560);
   assert.equal(matches[0]?.kickoff.toISOString(), "2026-10-20T19:00:00.000Z");
+  assert.equal(matches[0]?.venue, "Parc des Princes");
 });
 
 test("TheSportsDB TV matching uses event IDs and prioritizes configured free channels", () => {
@@ -109,4 +116,31 @@ test("TheSportsDB TV matching uses event IDs and prioritizes configured free cha
   assert.equal(found.get(1)?.name, "Globo");
   assert.equal(found.get(1)?.free, true);
   assert.equal(found.get(1)?.url, "https://globoplay.example/live");
+});
+
+test("Google Calendar events have stable IDs and viewing details", () => {
+  const item = { ...fixture(42, 18, true), venue: "Home Stadium" };
+  const event = eventResource(item, "America/Sao_Paulo");
+  assert.equal(googleEventId(item), "soccer42");
+  assert.equal(event.id, "soccer42");
+  assert.equal(event.summary, "Home 42 vs Away 42");
+  assert.equal(event.location, "Home Stadium (Home 42)");
+  assert.match(event.description ?? "", /CazéTV/);
+  assert.equal(event.source?.url, "https://youtube.com/watch?v=x");
+  assert.equal(event.extendedProperties?.private?.theSportsDbEventId, "42");
+});
+
+test("conflict prompt formatter includes venue and home team", () => {
+  const item = {
+    ...fixture(7, 16),
+    competition: "UEFA Champions League",
+    home: "Paris Saint-Germain",
+    away: "Barcelona",
+    venue: "Parc des Princes"
+  };
+  assert.equal(
+    displayMatch(item, "UTC"),
+    "16:00 — Paris Saint-Germain vs Barcelona (UEFA Champions League) — Location: Parc des Princes (Paris Saint-Germain) — broadcast unknown"
+  );
+  assert.match(displayMatch(fixture(8, 18), "UTC"), /Location: Home 8/);
 });

@@ -16,6 +16,10 @@ function details(match: Match): string {
   return `${match.competition}\nWatch on ${match.broadcast.name}${link}`;
 }
 
+export function matchLocation(match: Match): string {
+  return match.venue ? `${match.venue} (${match.home})` : match.home;
+}
+
 export function googleCalendarUrl(match: Match): string {
   const end = new Date(match.kickoff.getTime() + eventDurationMs);
   const query = new URLSearchParams({
@@ -23,7 +27,7 @@ export function googleCalendarUrl(match: Match): string {
     text: `${match.home} vs ${match.away}`,
     dates: `${compactUtc(match.kickoff)}/${compactUtc(end)}`,
     details: details(match),
-    location: `${match.home} (home)`
+    location: matchLocation(match)
   });
   return `https://calendar.google.com/calendar/render?${query}`;
 }
@@ -39,7 +43,7 @@ export function asIcs(matches: Match[]): string {
       `DTSTART:${compactUtc(match.kickoff)}`,
       `DTEND:${compactUtc(end)}`,
       `SUMMARY:${escapeIcs(`${match.home} vs ${match.away}`)}`,
-      `LOCATION:${escapeIcs(`${match.home} (home)`)}`,
+      `LOCATION:${escapeIcs(matchLocation(match))}`,
       `DESCRIPTION:${escapeIcs(details(match))}`
     );
     if (match.broadcast?.url) lines.push(`URL:${match.broadcast.url}`);

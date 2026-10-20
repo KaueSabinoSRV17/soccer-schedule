@@ -30,11 +30,40 @@ export SOCCER_TIMEZONE='America/Sao_Paulo'
 npm run dev
 ```
 
+## Google Calendar synchronization
+
+Create a Google OAuth Desktop client with the Calendar API enabled and place its downloaded JSON at:
+
+```text
+secrets/google-calendar-oauth.json
+```
+
+Authorize once on a machine with a browser:
+
+```sh
+npm run calendar:authorize
+```
+
+The refresh credential is stored with owner-only permissions in `data/google-calendar-token.json`. Both the OAuth client and token are ignored by Git. Then create or update the selected matches directly in your primary calendar:
+
+```sh
+npm run dev -- --sync-calendar
+```
+
+To use another calendar:
+
+```sh
+npm run dev -- --sync-calendar --calendar-id 'calendar-id@group.calendar.google.com'
+```
+
+`GOOGLE_CALENDAR_ID`, `GOOGLE_CALENDAR_CREDENTIALS`, and `GOOGLE_CALENDAR_TOKEN` can override the defaults. Events use stable IDs derived from TheSportsDB event IDs, so running the command again updates existing events instead of duplicating them. The app requests only the `calendar.events` OAuth scope.
+
 Specific date or unattended job:
 
 ```sh
 npm run dev -- --date 2026-10-20
 npm run dev -- --non-interactive --output out/today.ics
+npm run dev -- --non-interactive --sync-calendar
 ```
 
 Fixture entries in `config/broadcasts.json` override all providers. Use the TheSportsDB event ID as the key. Import the `.ics` file into Google Calendar or open the printed one-click URLs.

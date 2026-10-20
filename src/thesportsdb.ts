@@ -62,7 +62,8 @@ export class TheSportsDbClient {
         competition: event.strLeague,
         kickoff: parseUtcKickoff(event),
         home: event.strHomeTeam,
-        away: event.strAwayTeam
+        away: event.strAwayTeam,
+        ...(event.strVenue?.trim() ? { venue: event.strVenue.trim() } : {})
       }));
   }
 
