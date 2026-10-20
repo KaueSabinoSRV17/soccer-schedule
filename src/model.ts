@@ -14,6 +14,7 @@ export interface Match {
   home: string;
   away: string;
   venue?: string;
+  status?: string;
   broadcast?: Broadcast;
 }
 

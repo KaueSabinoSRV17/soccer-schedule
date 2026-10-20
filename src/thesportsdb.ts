@@ -10,6 +10,7 @@ interface SportsDbEvent {
   strHomeTeam: string;
   strAwayTeam: string;
   strVenue?: string | null;
+  strStatus?: string | null;
 }
 
 interface EventsResponse {
@@ -63,6 +64,7 @@ export class TheSportsDbClient {
         kickoff: parseUtcKickoff(event),
         home: event.strHomeTeam,
         away: event.strAwayTeam,
+        ...(event.strStatus?.trim() ? { status: event.strStatus.trim() } : {}),
         ...(event.strVenue?.trim() ? { venue: event.strVenue.trim() } : {})
       }));
   }

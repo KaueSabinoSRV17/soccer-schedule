@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { asIcs, googleCalendarUrl } from "../src/calendar.js";
 import { findSportsDbBroadcasts, findYouTubeBroadcasts, resolveBroadcasts, titleMatchesFixture } from "../src/broadcast.js";
 import type { Match } from "../src/model.js";
-import { chooseSchedule } from "../src/planner.js";
+import { chooseSchedule, isMatchFinished, unfinishedMatches } from "../src/planner.js";
 import { TheSportsDbClient } from "../src/thesportsdb.js";
 import { eventResource, googleEventId } from "../src/google-calendar.js";
 import { displayMatch } from "../src/presentation.js";
@@ -91,7 +91,7 @@ test("TheSportsDB client filters configured leagues and treats timestamps as UTC
     {
       idEvent: "2594560", idLeague: "4480", strLeague: "UEFA Champions League",
       strTimestamp: "2026-10-20T19:00:00", dateEvent: "2026-10-20", strTime: "19:00:00",
-      strHomeTeam: "Paris Saint-Germain", strAwayTeam: "Barcelona", strVenue: "Parc des Princes"
+      strHomeTeam: "Paris Saint-Germain", strAwayTeam: "Barcelona", strVenue: "Parc des Princes", strStatus: " FT "
     },
     {
       idEvent: "1", idLeague: "9999", strLeague: "Other", strTimestamp: "2026-10-20T20:00:00",
@@ -103,6 +103,7 @@ test("TheSportsDB client filters configured leagues and treats timestamps as UTC
   assert.equal(matches[0]?.fixtureId, 2594560);
   assert.equal(matches[0]?.kickoff.toISOString(), "2026-10-20T19:00:00.000Z");
   assert.equal(matches[0]?.venue, "Parc des Princes");
+  assert.equal(matches[0]?.status, "FT");
 });
 
 test("TheSportsDB TV matching uses event IDs and prioritizes configured free channels", () => {
@@ -143,4 +144,51 @@ test("conflict prompt formatter includes venue and home team", () => {
     "16:00 — Paris Saint-Germain vs Barcelona (UEFA Champions League) — Location: Parc des Princes (Paris Saint-Germain) — broadcast unknown"
   );
   assert.match(displayMatch(fixture(8, 18), "UTC"), /Location: Home 8/);
+});
+
+
+test("include-conflicts retains overlapping matches in kickoff order without asking", async () => {
+  const matches = [fixture(3, 20), fixture(1, 18), fixture(2, 18, true)];
+  const selected = await chooseSchedule(matches, async () => {
+    assert.fail("Full schedule must not prompt");
+  }, { includeConflicts: true });
+  assert.deepEqual(selected.map((match) => match.fixtureId), [1, 2, 3]);
+  assert.equal(matches[0]?.fixtureId, 3);
+});
+
+test("finished statuses override kickoff time", () => {
+  const now = new Date("2026-10-20T12:00:00Z");
+  for (const status of ["FT", "AET", "PEN", "Match Finished", " finished ", "Match Finished After Extra Time", "Match Finished After Penalty"]) {
+    assert.equal(isMatchFinished({ ...fixture(1, 18), status }, now), true, status);
+  }
+});
+
+test("explicit live, upcoming and unknown statuses override elapsed time", () => {
+  const now = new Date("2026-10-20T23:00:00Z");
+  for (const status of ["NS", "Not Started", "1H", "HT", "2H", "ET", "P", "SUSP", "custom status"]) {
+    assert.equal(isMatchFinished({ ...fixture(1, 18), status }, now), false, status);
+  }
+});
+
+test("missing status uses the 135-minute boundary", () => {
+  const item = fixture(1, 18);
+  assert.equal(isMatchFinished(item, new Date("2026-10-20T17:00:00Z")), false);
+  assert.equal(isMatchFinished(item, new Date("2026-10-20T20:14:59Z")), false);
+  assert.equal(isMatchFinished(item, new Date("2026-10-20T20:15:00Z")), true);
+  assert.equal(isMatchFinished({ ...item, status: "  " }, new Date("2026-10-20T20:15:00Z")), true);
+});
+
+test("finished fixtures are absent from conflict choices and calendar output", async () => {
+  const matches = unfinishedMatches([
+    { ...fixture(1, 18), status: "FT" }, fixture(2, 18), fixture(3, 18)
+  ], new Date("2026-10-20T18:30:00Z"));
+  const selected = await chooseSchedule(matches, async (choices) => {
+    assert.deepEqual(choices.map((match) => match.fixtureId), [2, 3]);
+    return choices[0]!;
+  });
+  assert.doesNotMatch(asIcs(selected), /Home 1/);
+  assert.deepEqual(matches.map((match) => eventResource(match, "UTC").id), ["soccer2", "soccer3"]);
+  const empty = unfinishedMatches([fixture(1, 10)], new Date("2026-10-20T23:00:00Z"));
+  assert.deepEqual(empty, []);
+  assert.doesNotMatch(asIcs(empty), /BEGIN:VEVENT/);
 });

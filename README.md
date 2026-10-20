@@ -13,6 +13,8 @@ It follows LaLiga, Premier League, Ligue 1, Bundesliga, Brasileirão Série A, I
 - Prompts when assumed 2h15 match windows overlap.
 - Generates an `.ics` file plus one-click Google Calendar URLs with viewing links.
 - With `--non-interactive`, automatically chooses the highest-priority conflicting match.
+- With `--include-conflicts`, keeps all unfinished matches, including overlapping games, without prompting.
+- Filters finished matches before broadcast lookup, conflict prompts and calendar output.
 
 TheSportsDB provides broadcaster names but usually not exact viewing URLs. `channel_urls` maps those names to official platform destinations, while the YouTube adapter discovers exact upcoming/live video links.
 
@@ -57,6 +59,18 @@ npm run dev -- --sync-calendar --calendar-id 'calendar-id@group.calendar.google.
 ```
 
 `GOOGLE_CALENDAR_ID`, `GOOGLE_CALENDAR_CREDENTIALS`, and `GOOGLE_CALENDAR_TOKEN` can override the defaults. Events use stable IDs derived from TheSportsDB event IDs, so running the command again updates existing events instead of duplicating them. The app requests only the `calendar.events` OAuth scope.
+
+To sync all unfinished matches without resolving overlaps:
+
+```sh
+npm run dev -- --full-calendar-sync
+```
+
+`--full-calendar-sync` combines `--include-conflicts` and `--sync-calendar`. For an ICS file containing all unfinished matches without direct Google synchronization, use `--include-conflicts` alone. `--non-interactive` keeps its existing behavior of choosing one match per conflict.
+
+TheSportsDB's `strStatus` is preserved. Finished codes (`FT`, `AET`, `PEN`) and finished text labels exclude a match regardless of kickoff time. When status is missing or blank, the app assumes a match has finished 135 minutes after kickoff. An explicit live, upcoming or unrecognized status takes precedence over that estimate. See [TheSportsDB status documentation](https://www.thesportsdb.com/docs_api_data_guide).
+
+Finished matches are omitted from new ICS files and Google Calendar create/update requests. Previously synchronized Google events remain as calendar history. If every match is finished, the app writes an empty ICS file.
 
 Specific date or unattended job:
 

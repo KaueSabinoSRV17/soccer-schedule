@@ -2,6 +2,22 @@ import type { Match } from "./model.js";
 
 const matchWindowMs = 135 * 60 * 1000;
 
+const finishedStatuses = new Set([
+  "FT", "AET", "PEN", "MATCH FINISHED", "FINISHED", "FULL TIME", "FULL-TIME",
+  "MATCH FINISHED AFTER EXTRA TIME", "MATCH FINISHED AFTER PENALTY",
+  "MATCH FINISHED AFTER PENALTIES"
+]);
+
+export function isMatchFinished(match: Match, now: Date = new Date()): boolean {
+  const status = match.status?.trim().toUpperCase();
+  if (status) return finishedStatuses.has(status);
+  return match.kickoff.getTime() + matchWindowMs <= now.getTime();
+}
+
+export function unfinishedMatches(matches: Match[], now: Date = new Date()): Match[] {
+  return matches.filter((match) => !isMatchFinished(match, now));
+}
+
 function isFreeYouTube(match: Match): boolean {
   return Boolean(match.broadcast?.free && match.broadcast.url?.toLowerCase().includes("youtube.com"));
 }
@@ -19,9 +35,11 @@ export function overlaps(left: Match, right: Match): boolean {
 
 export async function chooseSchedule(
   matches: Match[],
-  ask: (options: Match[]) => Promise<Match>
+  ask: (options: Match[]) => Promise<Match>,
+  options: { includeConflicts?: boolean } = {}
 ): Promise<Match[]> {
   let remaining = [...matches].sort((a, b) => a.kickoff.getTime() - b.kickoff.getTime());
+  if (options.includeConflicts) return remaining;
   const chosen: Match[] = [];
   while (remaining.length > 0) {
     const candidate = remaining.shift()!;

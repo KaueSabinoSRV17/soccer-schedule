@@ -6,7 +6,7 @@ import { loadBroadcastConfig, resolveBroadcasts } from "./broadcast.js";
 import { asIcs, googleCalendarUrl } from "./calendar.js";
 import { competitionIds } from "./config.js";
 import type { Match } from "./model.js";
-import { chooseSchedule } from "./planner.js";
+import { chooseSchedule, unfinishedMatches } from "./planner.js";
 import { TheSportsDbClient } from "./thesportsdb.js";
 import { syncMatchesToGoogleCalendar } from "./google-calendar.js";
 import { displayMatch } from "./presentation.js";
@@ -17,6 +17,7 @@ interface Options {
   broadcasts: string;
   output: string;
   nonInteractive: boolean;
+  includeConflicts: boolean;
   syncCalendar: boolean;
   calendarId: string;
 }
@@ -33,12 +34,18 @@ function parseArgs(args: string[]): Options {
     broadcasts: "config/broadcasts.json",
     output: "",
     nonInteractive: false,
+    includeConflicts: false,
     syncCalendar: false,
     calendarId: process.env.GOOGLE_CALENDAR_ID ?? "primary"
   };
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--non-interactive") options.nonInteractive = true;
+    else if (argument === "--include-conflicts") options.includeConflicts = true;
+    else if (argument === "--full-calendar-sync") {
+      options.includeConflicts = true;
+      options.syncCalendar = true;
+    }
     else if (argument === "--sync-calendar") options.syncCalendar = true;
     else if (argument === "--calendar-id") options.calendarId = requiredValue(args, ++index, argument);
     else if (argument === "--date") options.date = requiredValue(args, ++index, argument);
@@ -46,7 +53,7 @@ function parseArgs(args: string[]): Options {
     else if (argument === "--broadcasts") options.broadcasts = requiredValue(args, ++index, argument);
     else if (argument === "--output") options.output = requiredValue(args, ++index, argument);
     else if (argument === "--help" || argument === "-h") {
-      console.log("Usage: soccer-headsup [--date YYYY-MM-DD] [--timezone IANA_ZONE] [--broadcasts FILE] [--output FILE] [--non-interactive] [--sync-calendar] [--calendar-id ID]");
+      console.log("Usage: soccer-headsup [--date YYYY-MM-DD] [--timezone IANA_ZONE] [--broadcasts FILE] [--output FILE] [--non-interactive] [--include-conflicts] [--sync-calendar] [--full-calendar-sync] [--calendar-id ID]");
       process.exit(0);
     } else throw new Error(`Unknown option: ${argument}`);
   }
@@ -70,8 +77,11 @@ async function run(): Promise<void> {
     client.fixtures(options.date, competitionIds),
     client.tvSchedule(options.date, "Brazil")
   ]);
+  const eligibleFixtures = unfinishedMatches(fixtures);
+  const skipped = fixtures.length - eligibleFixtures.length;
+  if (skipped > 0) console.log(`Skipped ${skipped} finished match(es).`);
   const config = await loadBroadcastConfig(options.broadcasts);
-  const matches = await resolveBroadcasts(fixtures, config, {
+  const matches = eligibleFixtures.length === 0 ? [] : await resolveBroadcasts(eligibleFixtures, config, {
     youtubeApiKey: process.env.YOUTUBE_API_KEY,
     listingsUrl: process.env.BROADCAST_LISTINGS_URL,
     day: options.date,
@@ -80,8 +90,7 @@ async function run(): Promise<void> {
     warn: (message) => console.warn(message)
   });
   if (matches.length === 0) {
-    console.log(`No configured competition has a match on ${options.date}.`);
-    return;
+    console.log(`No unfinished matches in configured competitions on ${options.date}.`);
   }
 
   const terminal = createInterface({ input: stdin, output: stdout });
@@ -98,7 +107,7 @@ async function run(): Promise<void> {
       };
 
   try {
-    const selected = await chooseSchedule(matches, ask);
+    const selected = await chooseSchedule(matches, ask, { includeConflicts: options.includeConflicts });
     await mkdir(dirname(options.output), { recursive: true });
     await writeFile(options.output, asIcs(selected), "utf8");
     if (options.syncCalendar) {
