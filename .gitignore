@@ -5,3 +5,4 @@ dist/
 secrets/
 data/*.json
 out/*.ics
+gha-creds-*.json

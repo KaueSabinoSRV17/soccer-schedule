@@ -1,0 +1,90 @@
+name: Build and publish container
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION || 'southamerica-east1' }}
+      GAR_REPOSITORY: ${{ vars.GAR_REPOSITORY || 'soccer-schedule' }}
+      IMAGE_NAME: soccer-schedule
+      PUBLISH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and test image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: soccer-schedule:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Check container startup
+        run: docker run --rm --network none soccer-schedule:ci --help
+
+      - name: Validate publishing configuration
+        if: env.PUBLISH == 'true'
+        env:
+          WIF_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+        run: |
+          for variable in GCP_PROJECT_ID WIF_PROVIDER SERVICE_ACCOUNT; do
+            if [[ -z "${!variable}" ]]; then
+              echo "::error::Missing Actions variable: $variable (see README.md)"
+              exit 1
+            fi
+          done
+
+      - name: Authenticate to Google Cloud
+        if: env.PUBLISH == 'true'
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          token_format: access_token
+          create_credentials_file: false
+
+      - name: Log in to Artifact Registry
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.GCP_REGION }}-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Push validated image
+        if: env.PUBLISH == 'true'
+        run: |
+          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/${IMAGE_NAME}"
+          docker tag soccer-schedule:ci "${image}:${GITHUB_SHA}"
+          docker tag soccer-schedule:ci "${image}:latest"
+          docker push "${image}:${GITHUB_SHA}"
+          docker push "${image}:latest"
+          printf 'Published %s:%s and %s:latest\n' "$image" "$GITHUB_SHA" "$image" >> "$GITHUB_STEP_SUMMARY"

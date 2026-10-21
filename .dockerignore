@@ -1,0 +1,13 @@
+# Allow only the inputs needed to build and run the application.
+**
+!Dockerfile
+!package.json
+!package-lock.json
+!tsconfig.json
+!src/
+!src/**
+!tests/
+!tests/**
+!config/
+!config/broadcasts.json
+!config/broadcasts.example.json

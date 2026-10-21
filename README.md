@@ -112,6 +112,62 @@ Provider failures are non-fatal and produce a warning, allowing the remaining pr
 
 This isolates any provider-specific authentication or response mapping behind a small HTTP adapter.
 
+## Container and Cloud Run Job
+
+Build the Linux AMD64 image required by this deployment:
+
+```sh
+docker build --platform linux/amd64 -t soccer-schedule:local .
+docker run --rm --network none soccer-schedule:local --help
+```
+
+The build runs the TypeScript build and test suite. The final image contains production dependencies, compiled application code and broadcast configuration, and runs as the unprivileged `node` user. The build context allowlist excludes local credentials, environment files, Git metadata and generated output.
+
+The default command is `node dist/src/cli.js --full-calendar-sync`. It performs one collection and synchronization run and exits, as a Cloud Run **Job** expects; it does not start an HTTP server. Command-line arguments replace the default arguments:
+
+```sh
+docker run --rm \
+  --env THESPORTSDB_API_KEY \
+  --env YOUTUBE_API_KEY \
+  --env GOOGLE_CALENDAR_TOKEN=/var/secrets/google-calendar-token/token.json \
+  --mount "type=bind,src=$(pwd)/data/google-calendar-token.json,dst=/var/secrets/google-calendar-token/token.json,readonly" \
+  soccer-schedule:local --full-calendar-sync
+```
+
+For Cloud Run, inject `THESPORTSDB_API_KEY` and `YOUTUBE_API_KEY` from Secret Manager and mount the existing Google Calendar refresh-token JSON at the path specified by `GOOGLE_CALENDAR_TOKEN`. `SOCCER_TIMEZONE` defaults to `America/Sao_Paulo`; `GOOGLE_CALENDAR_ID` defaults to `primary`. The mounted token must be readable by the container user. Google Calendar authorization is completed separately, before execution. ICS files under `/app/out` are temporary container output; Google Calendar events persist remotely.
+
+The adjacent infrastructure repository expects this image path:
+
+```text
+southamerica-east1-docker.pkg.dev/PROJECT_ID/soccer-schedule/soccer-schedule:latest
+```
+
+Its collector currently overrides the image arguments with `--non-interactive --sync-calendar`. Change those arguments to `["--full-calendar-sync"]` in `modules/collector/main.tf` to retain all overlapping games. After publishing an image, enable `deploy_job` in `live/config.hcl` and apply the collector configuration. Publishing an image alone does not deploy or update the Job; use `SOCCER_IMAGE` with the published commit SHA tag when applying infrastructure for a specific release.
+
+## GitHub Actions publishing
+
+[The container workflow](.github/workflows/container.yml) builds and tests on pull requests targeting `main`. Pushes to `main`, or manual runs on `main`, additionally publish the validated image to Artifact Registry with the full commit SHA and `latest` tags. Other manual runs only build and validate. The workflow does not execute the application against live APIs or deploy the Cloud Run Job.
+
+Create these **repository Actions variables** under Settings → Secrets and variables → Actions → Variables:
+
+| Variable | Value |
+| --- | --- |
+| `GCP_PROJECT_ID` | Your existing Google Cloud project ID |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | `projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL/providers/PROVIDER` |
+| `GCP_SERVICE_ACCOUNT` | Email of the service account used by GitHub to publish images |
+| `GCP_REGION` | Optional; defaults to `southamerica-east1` |
+| `GAR_REPOSITORY` | Optional; defaults to `soccer-schedule` |
+
+Authentication uses [Google's Workload Identity Federation action](https://github.com/google-github-actions/auth#workload-identity-federation-through-a-service-account), without storing a service account key in GitHub. The existing infrastructure does not yet create the GitHub federation or publishing service account. Configure these in the infrastructure repository before the first publishing run:
+
+1. Create a Workload Identity Pool and OIDC provider for `https://token.actions.githubusercontent.com`, mapping `google.subject=assertion.sub` and `attribute.repository=assertion.repository`.
+2. Restrict the provider attribute condition to `assertion.repository == 'KaueSabinoSRV17/soccer-schedule' && assertion.ref == 'refs/heads/main'`.
+3. Create a dedicated publishing service account. Grant it `roles/artifactregistry.writer` on the `soccer-schedule` Artifact Registry repository.
+4. Grant `roles/iam.workloadIdentityUser` on that service account to `principalSet://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL/attribute.repository/KaueSabinoSRV17/soccer-schedule`.
+5. Enable the IAM Service Account Credentials and Security Token Service APIs, and fill in the required Actions variables above.
+
+Application API keys and Calendar tokens belong in Secret Manager at runtime; this workflow does not need them.
+
 ## Validate
 
 ```sh
