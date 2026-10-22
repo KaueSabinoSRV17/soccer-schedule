@@ -106,6 +106,47 @@ test("TheSportsDB client filters configured leagues and treats timestamps as UTC
   assert.equal(matches[0]?.status, "FT");
 });
 
+test("fixtures select the Sao Paulo day across UTC midnight and deduplicate adjacent responses", async () => {
+  const requested: string[] = [];
+  const event = (id: string, timestamp: string, home: string, away: string) => ({
+    idEvent: id, idLeague: "4501", strLeague: "Copa Libertadores",
+    strTimestamp: timestamp, dateEvent: timestamp.slice(0, 10), strTime: "00:30:00",
+    strHomeTeam: home, strAwayTeam: away
+  });
+  const yesterday = event("1", "2026-10-22T00:30:00Z", "Palmeiras", "Fluminense");
+  const today = event("2", "2026-10-23T00:30:00Z", "Flamengo", "Estudiantes");
+  const tomorrow = event("3", "2026-10-23T03:00:00Z", "Tomorrow", "Other");
+  const fetchMock: typeof fetch = async (input) => {
+    const day = new URL(String(input)).searchParams.get("d")!;
+    requested.push(day);
+    const events = day === "2026-10-21" ? null
+      : day === "2026-10-22" ? [yesterday, today] : [today, tomorrow];
+    return new Response(JSON.stringify({ events }));
+  };
+  const matches = await new TheSportsDbClient("secret", fetchMock)
+    .fixtures("2026-10-22", new Set([4501]), "America/Sao_Paulo");
+  assert.deepEqual(requested.sort(), ["2026-10-21", "2026-10-22", "2026-10-23"]);
+  assert.deepEqual(matches.map((match) => match.home), ["Flamengo"]);
+  assert.equal(matches[0]?.kickoff.toISOString(), "2026-10-23T00:30:00.000Z");
+});
+
+test("fixtures include the previous UTC date for time zones east of UTC across a year boundary", async () => {
+  const requested: string[] = [];
+  const fetchMock: typeof fetch = async (input) => {
+    const day = new URL(String(input)).searchParams.get("d")!;
+    requested.push(day);
+    return new Response(JSON.stringify({ events: day === "2025-12-31" ? [{
+      idEvent: "1", idLeague: "4501", strLeague: "Copa Libertadores",
+      strTimestamp: "2025-12-31T15:00:00Z", dateEvent: day, strTime: "15:00:00",
+      strHomeTeam: "Home", strAwayTeam: "Away"
+    }] : [] }));
+  };
+  const matches = await new TheSportsDbClient("secret", fetchMock)
+    .fixtures("2026-01-01", new Set([4501]), "Asia/Tokyo");
+  assert.deepEqual(requested.sort(), ["2025-12-31", "2026-01-01", "2026-01-02"]);
+  assert.equal(matches.length, 1);
+});
+
 test("TheSportsDB TV matching uses event IDs and prioritizes configured free channels", () => {
   const found = findSportsDbBroadcasts([fixture(1, 18)], [
     { idEvent: "1", strCountry: "Brazil", strChannel: "Premiere" },

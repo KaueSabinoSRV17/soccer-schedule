@@ -7,6 +7,7 @@ It follows LaLiga, Premier League, Ligue 1, Bundesliga, Brasileirão Série A, I
 ## Current behavior
 
 - Fetches event ID, competition, UTC kickoff, and home/away teams from TheSportsDB.
+- Fetches adjacent dates and filters kickoff times by the selected time zone, so late evening matches belong to the correct local day.
 - Fetches Brazil-filtered TV listings from TheSportsDB and joins them by the shared event ID.
 - Resolves providers through a hybrid chain: fixture override, trusted YouTube channels, TheSportsDB TV listings, an optional extra listings API, then a competition fallback.
 - Puts free YouTube broadcasts first (for example, CazéTV and Ge TV).

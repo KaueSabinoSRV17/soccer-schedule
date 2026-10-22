@@ -74,7 +74,7 @@ async function run(): Promise<void> {
 
   const client = new TheSportsDbClient(apiKey);
   const [fixtures, tvEvents] = await Promise.all([
-    client.fixtures(options.date, competitionIds),
+    client.fixtures(options.date, competitionIds, options.timezone),
     client.tvSchedule(options.date, "Brazil")
   ]);
   const eligibleFixtures = unfinishedMatches(fixtures);

@@ -53,9 +53,25 @@ export class TheSportsDbClient {
     return await response.json() as T;
   }
 
-  async fixtures(day: string, leagueIds: ReadonlySet<number>): Promise<Match[]> {
-    const payload = await this.get<EventsResponse>("eventsday.php", { d: day, s: "Soccer" });
-    return (payload.events ?? [])
+  async fixtures(day: string, leagueIds: ReadonlySet<number>, timezone = "UTC"): Promise<Match[]> {
+    const date = new Date(`${day}T00:00:00Z`);
+    if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== day) {
+      throw new TheSportsDbError(`Invalid fixture date: ${day}`);
+    }
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit"
+    });
+    // A local calendar day can cross UTC midnight. Query both neighboring
+    // dates, then use the actual kickoff to select the requested local day.
+    const days = [-1, 0, 1].map((offset) =>
+      new Date(date.getTime() + offset * 86_400_000).toISOString().slice(0, 10)
+    );
+    const payloads = await Promise.all(days.map((d) =>
+      this.get<EventsResponse>("eventsday.php", { d, s: "Soccer" })
+    ));
+    const events = new Map(payloads.flatMap((payload) => payload.events ?? [])
+      .map((event) => [event.idEvent, event]));
+    return [...events.values()]
       .filter((event) => leagueIds.has(Number(event.idLeague)))
       .map((event) => ({
         fixtureId: Number(event.idEvent),
@@ -66,7 +82,9 @@ export class TheSportsDbClient {
         away: event.strAwayTeam,
         ...(event.strStatus?.trim() ? { status: event.strStatus.trim() } : {}),
         ...(event.strVenue?.trim() ? { venue: event.strVenue.trim() } : {})
-      }));
+      }))
+      .filter((match) => formatter.format(match.kickoff) === day)
+      .sort((left, right) => left.kickoff.getTime() - right.kickoff.getTime());
   }
 
   async tvSchedule(day: string, country = "Brazil"): Promise<SportsDbTvEvent[]> {
