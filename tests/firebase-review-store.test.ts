@@ -39,6 +39,16 @@ test('Firestore transaction accepts one submission, rejects invalid owner, and s
   assert.equal(writes, 2);
   assert.equal((await ref.collection('submissions').doc('first').get()).data()!.status, 'synced');
 });
+test('reconciliation lists only retryable submissions in creation order', integration, async () => {
+  const db = getFirestore();
+  const id = '2099-01-05';
+  const ref = db.collection(`dailyReviews/${id}/submissions`);
+  await ref.doc('early').set({ status: 'pending' });
+  await ref.doc('done').set({ status: 'synced' });
+  await ref.doc('later').set({ status: 'failed' });
+  const store = new FirebaseReviewStore(db, {} as Messaging);
+  assert.deepEqual(await store.retryableSubmissionIds(id), ['early', 'later']);
+});
 test('concurrent publishers have one preparation owner', integration, async () => {
   const db = getFirestore();
   const one = new FirebaseReviewStore(db, {} as Messaging);

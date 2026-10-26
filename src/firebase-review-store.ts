@@ -64,6 +64,14 @@ export class FirebaseReviewStore implements ReviewStore {
     });
   }
 
+  async retryableSubmissionIds(reviewId: string): Promise<string[]> {
+    const snapshot = await this.db.collection(`dailyReviews/${reviewId}/submissions`).get();
+    return snapshot.docs
+      .filter(doc => ['pending', 'failed'].includes(doc.data().status))
+      .sort((left, right) => left.createTime.toMillis() - right.createTime.toMillis())
+      .map(doc => doc.id);
+  }
+
   async notifyOnce(reviewId: string, pendingGroups: number): Promise<void> {
     const ref = this.db.doc(`dailyReviews/${reviewId}`);
     const claimed = await this.db.runTransaction(async transaction => {

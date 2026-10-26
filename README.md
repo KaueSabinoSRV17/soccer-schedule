@@ -205,7 +205,13 @@ kickoff eligibility at submission time. Invalid requests are rejected; transient
 Calendar failures retry the same stable fixture event IDs. Cancelled legacy
 selections are explicitly restored as confirmed events. Migration removes only
 future conflicting events with exact app ownership tags, preserving history and
-unrelated events. Rerunning a ready day does not remove accepted selections.
+unrelated events. Rerunning a ready day does not remove accepted selections. If an Eventarc
+invocation is acknowledged before it processes a submission, use
+`--reconcile-review YYYY-MM-DD` with the configured runtime identity. It reads
+pending or failed submissions in creation order and runs the same validation and
+Calendar sync without fetching fixtures, replacing the frozen review or sending
+another notification. Run it as a one-time Cloud Run Job argument override while
+the daily scheduler is paused; the job's configured command remains unchanged.
 
 Run the separate IaC repository's `make test-mobile` with `SOCCER_SCHEDULE_APP`
 pointing here for isolated Firestore rules/transaction tests. Ordinary `npm test`

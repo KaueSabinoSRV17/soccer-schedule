@@ -9,13 +9,14 @@ import type { Match } from "./model.js";
 import { chooseSchedule, unfinishedMatches } from "./planner.js";
 import { TheSportsDbClient } from "./thesportsdb.js";
 import { syncMatchesToGoogleCalendar } from "./google-calendar.js";
-import { publishReview } from "./review-workflow.js";
-import { firebaseReviewStore } from "./firebase-review-store.js";
+import { processSubmission, publishReview } from "./review-workflow.js";
+import { configuredOwnerEmail, firebaseReviewStore } from "./firebase-review-store.js";
 import { reviewCalendarWriter } from "./review-calendar.js";
 import { displayMatch } from "./presentation.js";
 
 interface Options {
   publishReview: boolean;
+  reconcileReview?: string;
   date: string;
   timezone: string;
   broadcasts: string;
@@ -46,6 +47,7 @@ function parseArgs(args: string[]): Options {
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--publish-daily-review") options.publishReview = true;
+    else if (argument === "--reconcile-review") options.reconcileReview = requiredValue(args, ++index, argument);
     else if (argument === "--non-interactive") options.nonInteractive = true;
     else if (argument === "--include-conflicts") options.includeConflicts = true;
     else if (argument === "--full-calendar-sync") {
@@ -59,10 +61,12 @@ function parseArgs(args: string[]): Options {
     else if (argument === "--broadcasts") options.broadcasts = requiredValue(args, ++index, argument);
     else if (argument === "--output") options.output = requiredValue(args, ++index, argument);
     else if (argument === "--help" || argument === "-h") {
-      console.log("Usage: soccer-headsup [--date YYYY-MM-DD] [--timezone IANA_ZONE] [--broadcasts FILE] [--output FILE] [--non-interactive] [--include-conflicts] [--sync-calendar] [--full-calendar-sync] [--publish-daily-review] [--calendar-id ID]");
+      console.log("Usage: soccer-headsup [--date YYYY-MM-DD] [--timezone IANA_ZONE] [--broadcasts FILE] [--output FILE] [--non-interactive] [--include-conflicts] [--sync-calendar] [--full-calendar-sync] [--publish-daily-review] [--reconcile-review YYYY-MM-DD] [--calendar-id ID]");
       process.exit(0);
     } else throw new Error(`Unknown option: ${argument}`);
   }
+  if (options.reconcileReview && (options.publishReview || options.syncCalendar || options.includeConflicts)) throw new Error("Review reconciliation cannot be combined with Calendar synchronization or publication");
+  if (options.reconcileReview && !/^\d{4}-\d{2}-\d{2}$/.test(options.reconcileReview)) throw new Error("Review reconciliation requires a YYYY-MM-DD date");
   if (options.publishReview && (options.syncCalendar || options.includeConflicts)) throw new Error("Daily review mode cannot be combined with full Calendar synchronization");
   if (options.publishReview && options.timezone !== "America/Sao_Paulo") throw new Error("Daily review mode requires America/Sao_Paulo timezone");
   options.output ||= `out/${options.date}.ics`;
@@ -77,6 +81,14 @@ function requiredValue(args: string[], index: number, option: string): string {
 
 async function run(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
+  if (options.reconcileReview) {
+    const store = firebaseReviewStore();
+    const calendar = reviewCalendarWriter({ calendarId: options.calendarId });
+    const ids = await store.retryableSubmissionIds(options.reconcileReview);
+    for (const id of ids) await processSubmission(store, calendar, options.reconcileReview, id, configuredOwnerEmail());
+    console.log(`Reconciled ${ids.length} pending or failed submission(s) for ${options.reconcileReview}.`);
+    return;
+  }
   const apiKey = process.env.THESPORTSDB_API_KEY;
   if (!apiKey) throw new Error("THESPORTSDB_API_KEY is required");
 
