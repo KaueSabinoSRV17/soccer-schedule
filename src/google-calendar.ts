@@ -71,6 +71,7 @@ export function eventResource(match: Match, timezone: string): calendar_v3.Schem
   const end = new Date(match.kickoff.getTime() + eventDurationMs);
   return {
     id: googleEventId(match),
+    status: "confirmed",
     summary: `${match.home} vs ${match.away}`,
     location: matchLocation(match),
     description: description(match),
@@ -94,9 +95,10 @@ export interface SyncResult {
 
 export async function syncMatchesToGoogleCalendar(
   matches: Match[],
-  options: { calendarId: string; timezone: string; tokenPath?: string }
+  options: { calendarId: string; timezone: string; tokenPath?: string },
+  calendarClient?: calendar_v3.Calendar
 ): Promise<SyncResult> {
-  const calendar = await authorizedCalendar(options.tokenPath ?? defaultTokenPath);
+  const calendar = calendarClient ?? await authorizedCalendar(options.tokenPath ?? defaultTokenPath);
   const result: SyncResult = { created: 0, updated: 0, links: [] };
   for (const match of matches) {
     const eventId = googleEventId(match);
@@ -115,13 +117,38 @@ export async function syncMatchesToGoogleCalendar(
       const status = (error as { code?: number; response?: { status?: number } }).code
         ?? (error as { response?: { status?: number } }).response?.status;
       if (status !== 404) throw error;
-      const created = await calendar.events.insert({
-        calendarId: options.calendarId,
-        requestBody: eventResource(match, options.timezone)
-      });
-      result.created += 1;
-      if (created.data.htmlLink) result.links.push(created.data.htmlLink);
+      try {
+        const created = await calendar.events.insert({ calendarId: options.calendarId, requestBody: eventResource(match, options.timezone) });
+        result.created += 1;
+        if (created.data.htmlLink) result.links.push(created.data.htmlLink);
+      } catch (insertError) {
+        const code = (insertError as { code?: number; response?: { status?: number } }).code ?? (insertError as { response?: { status?: number } }).response?.status;
+        if (code !== 409) throw insertError;
+        const updated = await calendar.events.update(request);
+        result.updated += 1;
+        if (updated.data.htmlLink) result.links.push(updated.data.htmlLink);
+      }
     }
   }
   return result;
+}
+
+/** Removes only future events carrying this collector's exact ownership metadata. */
+export async function removeManagedFutureConflicts(matches: Match[], options: { calendarId: string; timezone: string; tokenPath?: string }, calendarClient?: calendar_v3.Calendar): Promise<void> {
+  const calendar = calendarClient ?? await authorizedCalendar(options.tokenPath ?? defaultTokenPath);
+  for (const match of matches) {
+    if (match.kickoff.getTime() <= Date.now()) continue;
+    const eventId = googleEventId(match);
+    try {
+      const existing = await calendar.events.get({ calendarId: options.calendarId, eventId });
+      const metadata = existing.data.extendedProperties?.private;
+      if (metadata?.soccerHeadsUp !== "true" || metadata.theSportsDbEventId !== String(match.fixtureId)) continue;
+      const starts = Date.parse(existing.data.start?.dateTime ?? "");
+      if (!Number.isFinite(starts) || starts <= Date.now()) continue;
+      await calendar.events.delete({ calendarId: options.calendarId, eventId });
+    } catch (error) {
+      const status = (error as { code?: number; response?: { status?: number } }).code ?? (error as { response?: { status?: number } }).response?.status;
+      if (status !== 404 && status !== 410) throw error;
+    }
+  }
 }

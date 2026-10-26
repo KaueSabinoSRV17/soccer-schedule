@@ -9,9 +9,13 @@ import type { Match } from "./model.js";
 import { chooseSchedule, unfinishedMatches } from "./planner.js";
 import { TheSportsDbClient } from "./thesportsdb.js";
 import { syncMatchesToGoogleCalendar } from "./google-calendar.js";
+import { publishReview } from "./review-workflow.js";
+import { firebaseReviewStore } from "./firebase-review-store.js";
+import { reviewCalendarWriter } from "./review-calendar.js";
 import { displayMatch } from "./presentation.js";
 
 interface Options {
+  publishReview: boolean;
   date: string;
   timezone: string;
   broadcasts: string;
@@ -29,6 +33,7 @@ function localIsoDate(): string {
 
 function parseArgs(args: string[]): Options {
   const options: Options = {
+    publishReview: false,
     date: localIsoDate(),
     timezone: process.env.SOCCER_TIMEZONE ?? "America/Sao_Paulo",
     broadcasts: "config/broadcasts.json",
@@ -40,7 +45,8 @@ function parseArgs(args: string[]): Options {
   };
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
-    if (argument === "--non-interactive") options.nonInteractive = true;
+    if (argument === "--publish-daily-review") options.publishReview = true;
+    else if (argument === "--non-interactive") options.nonInteractive = true;
     else if (argument === "--include-conflicts") options.includeConflicts = true;
     else if (argument === "--full-calendar-sync") {
       options.includeConflicts = true;
@@ -53,10 +59,12 @@ function parseArgs(args: string[]): Options {
     else if (argument === "--broadcasts") options.broadcasts = requiredValue(args, ++index, argument);
     else if (argument === "--output") options.output = requiredValue(args, ++index, argument);
     else if (argument === "--help" || argument === "-h") {
-      console.log("Usage: soccer-headsup [--date YYYY-MM-DD] [--timezone IANA_ZONE] [--broadcasts FILE] [--output FILE] [--non-interactive] [--include-conflicts] [--sync-calendar] [--full-calendar-sync] [--calendar-id ID]");
+      console.log("Usage: soccer-headsup [--date YYYY-MM-DD] [--timezone IANA_ZONE] [--broadcasts FILE] [--output FILE] [--non-interactive] [--include-conflicts] [--sync-calendar] [--full-calendar-sync] [--publish-daily-review] [--calendar-id ID]");
       process.exit(0);
     } else throw new Error(`Unknown option: ${argument}`);
   }
+  if (options.publishReview && (options.syncCalendar || options.includeConflicts)) throw new Error("Daily review mode cannot be combined with full Calendar synchronization");
+  if (options.publishReview && options.timezone !== "America/Sao_Paulo") throw new Error("Daily review mode requires America/Sao_Paulo timezone");
   options.output ||= `out/${options.date}.ics`;
   return options;
 }
@@ -91,6 +99,12 @@ async function run(): Promise<void> {
   });
   if (matches.length === 0) {
     console.log(`No unfinished matches in configured competitions on ${options.date}.`);
+  }
+
+  if (options.publishReview) {
+    await publishReview(firebaseReviewStore(), reviewCalendarWriter({ calendarId: options.calendarId }), matches, options.date);
+    console.log(`Published owner-only daily review for ${options.date}.`);
+    return;
   }
 
   const terminal = createInterface({ input: stdin, output: stdout });

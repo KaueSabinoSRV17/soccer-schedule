@@ -143,7 +143,7 @@ The adjacent infrastructure repository expects this image path:
 southamerica-east1-docker.pkg.dev/PROJECT_ID/soccer-schedule/soccer-schedule:latest
 ```
 
-Its collector currently overrides the image arguments with `--non-interactive --sync-calendar`. Change those arguments to `["--full-calendar-sync"]` in `modules/collector/main.tf` to retain all overlapping games. After publishing an image, enable `deploy_job` in `live/config.hcl` and apply the collector configuration. Publishing an image alone does not deploy or update the Job; use `SOCCER_IMAGE` with the published commit SHA tag when applying infrastructure for a specific release.
+The IaC collector defaults to `--full-calendar-sync`; its reviewed owner-only mobile rollout switches to `--publish-daily-review`. After publishing an image, enable `deploy_job` in `live/config.hcl` and apply the collector configuration. Publishing an image alone does not deploy or update the Job; use `SOCCER_IMAGE` with the published commit SHA tag when applying infrastructure for a specific release.
 
 ## GitHub Actions publishing
 
@@ -159,7 +159,7 @@ Create these **repository Actions variables** under Settings → Secrets and var
 | `GCP_REGION` | Optional; defaults to `southamerica-east1` |
 | `GAR_REPOSITORY` | Optional; defaults to `soccer-schedule` |
 
-Authentication uses [Google's Workload Identity Federation action](https://github.com/google-github-actions/auth#workload-identity-federation-through-a-service-account), without storing a service account key in GitHub. The existing infrastructure does not yet create the GitHub federation or publishing service account. Configure these in the infrastructure repository before the first publishing run:
+Authentication uses [Google's Workload Identity Federation action](https://github.com/google-github-actions/auth#workload-identity-federation-through-a-service-account), without storing a service account key in GitHub. The separate infrastructure repository manages GitHub federation and the publishing service account. Its configuration must provide the following before the first publishing run:
 
 1. Create a Workload Identity Pool and OIDC provider for `https://token.actions.githubusercontent.com`, mapping `google.subject=assertion.sub` and `attribute.repository=assertion.repository`.
 2. Restrict the provider attribute condition to `assertion.repository == 'KaueSabinoSRV17/soccer-schedule' && assertion.ref == 'refs/heads/main'`.
@@ -177,4 +177,38 @@ npm run check
 npm run build
 ```
 
-The core can run from cron, a container, a scheduled function, or CI. A fully unattended interactive service will need a notification adapter (email, Telegram, web UI, etc.) for choices and Google OAuth for direct calendar insertion; both can be added without changing fixture collection or selection.
+## Owner-only mobile daily review
+
+Use Node 22.12+ (`.nvmrc` pins the development version). `--publish-daily-review`
+publishes one frozen Firestore review for the São Paulo date, automatically syncs
+only non-conflicting matches, and sends a daily FCM notification to the owner's
+registered Android installation. Calendar continues to provide kickoff reminders.
+The legacy CLI flags retain their existing behavior.
+
+```bash
+npm ci
+npm test
+npm run check
+# Production-only operation; requires configured identity, API keys and Calendar token:
+npm start -- --publish-daily-review
+```
+
+Set `GOOGLE_CLOUD_PROJECT`, `SOCCER_OWNER_EMAIL`, `GOOGLE_CALENDAR_ID` and
+`GOOGLE_CALENDAR_TOKEN`; use the attached runtime identity for Firestore/FCM.
+`--calendar-id` is respected, and mobile mode requires `America/Sao_Paulo`.
+`src/review-worker.ts` exports `processReviewSubmission` for the separately
+provisioned Firestore-triggered function; the CLI container is still a run-once job.
+
+The first valid immutable submission is final for a daily review. Server validation
+checks owner, review revision, allowed fixtures, all conflict groups, overlaps and
+kickoff eligibility at submission time. Invalid requests are rejected; transient
+Calendar failures retry the same stable fixture event IDs. Cancelled legacy
+selections are explicitly restored as confirmed events. Migration removes only
+future conflicting events with exact app ownership tags, preserving history and
+unrelated events. Rerunning a ready day does not remove accepted selections.
+
+Run the separate IaC repository's `make test-mobile` with `SOCCER_SCHEDULE_APP`
+pointing here for isolated Firestore rules/transaction tests. Ordinary `npm test`
+skips emulator-dependent tests when `FIRESTORE_EMULATOR_HOST` is absent. Never set
+that variable to a production host. Cloud provisioning, owner policy, security
+rules, worker builds/triggers and Android config export belong in the IaC repo.
